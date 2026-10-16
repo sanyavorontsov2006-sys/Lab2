@@ -1,0 +1,101 @@
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+import requests
+
+from main import (
+    find_roman_numerals,
+    fetch_url,
+    int_to_roman,
+    read_text_file,
+    roman_to_int,
+)
+class RomanConversionTests(unittest.TestCase):
+    def test_common_values(self):
+        cases = {"I": 1, "IV": 4, "IX": 9, "XL": 40,
+                 "XC": 90, "CD": 400, "CM": 900, "MCMXCIV": 1994,
+                 "MMMCMXCIX": 3999}
+        for roman, expected in cases.items():
+            with self.subTest(roman=roman):
+                self.assertEqual(roman_to_int(roman), expected)
+
+    def test_lowercase_is_accepted(self):
+        self.assertEqual(roman_to_int("xiv"), 14)
+
+    def test_invalid_roman_values(self):
+        for value in ("", "IIII", "VV", "IC", "MMMM", "ABC", "IIV"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    roman_to_int(value)
+
+    def test_integer_range(self):
+        for value in (0, -1, 4000, 1.5, True):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    int_to_roman(value)
+
+    def test_round_trip_for_all_supported_numbers(self):
+        for number in range(1, 4000):
+            self.assertEqual(roman_to_int(int_to_roman(number)), number)
+
+
+class SearchTests(unittest.TestCase):
+    def test_find_numbers_in_text(self):
+        self.assertEqual(
+            find_roman_numerals("Chapters IV and XII; year MMXXIV."),
+            [("IV", 4), ("XII", 12), ("MMXXIV", 2024)],
+        )
+
+    def test_no_numbers(self):
+        self.assertEqual(find_roman_numerals("Hello, world! 123"), [])
+
+    def test_invalid_sequence_is_not_reported_as_whole(self):
+        # Неканонические последовательности не должны приниматься целиком.
+        self.assertNotIn(("IIII", 4), find_roman_numerals("IIII"))
+
+    def test_non_string_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            find_roman_numerals(None)
+
+
+class FileTests(unittest.TestCase):
+    def test_read_text_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.txt"
+            path.write_text("Part IX", encoding="utf-8")
+            self.assertEqual(read_text_file(str(path)), "Part IX")
+
+    def test_missing_file(self):
+        with self.assertRaises(FileNotFoundError):
+            read_text_file("this_file_does_not_exist_12345.txt")
+
+
+class UrlTests(unittest.TestCase):
+    def test_rejects_invalid_url(self):
+        with self.assertRaises(ValueError):
+            fetch_url("ftp://example.com")
+
+    @patch("main.requests.get")
+    def test_fetch_url_success(self, mock_get):
+        response = Mock()
+        response.text = "<html>Chapter VII</html>"
+        response.encoding = "utf-8"
+        response.apparent_encoding = "utf-8"
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+
+        self.assertEqual(fetch_url("https://example.com"), response.text)
+        mock_get.assert_called_once()
+
+    @patch("main.requests.get")
+    def test_http_error_propagates(self, mock_get):
+        mock_get.side_effect = requests.Timeout("timed out")
+        with self.assertRaises(requests.Timeout):
+            fetch_url("https://example.com", timeout=1)
+
+
+if __name__ == "__main__":
+    unittest.main()
